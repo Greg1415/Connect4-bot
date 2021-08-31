@@ -6,10 +6,8 @@ macro_rules! parse_input {
 
 
 /*
-    The order in which columns are tested.
-    Start from the middle and work outward
+    A few constants for tuning the solver.
 */
-
 static ColOrder: [usize;9] = [4,3,5,2,6,1,7,0,8];
 static EvalDepth: usize = 9;
 
@@ -75,7 +73,7 @@ fn main() {
 const N_ROWS: usize = 7;
 const N_COLS: usize = 9;
 
-// Board interface
+// Methods provided by the board
 trait Board{
 
     /* Can this column be played? */
@@ -92,30 +90,36 @@ trait Board{
 }
 
 #[derive(Copy,Clone)]
+/* A bitboard allows bitwise operations to be used instead of loops, improving performance
+   Bit format:
+   let n[b] = n&(1<<b)
+   The bit mask for row r, column c is (1 << (c * 8 + r))
+   Row 0 is the bottom row, row 6 is the top row
+*/
+
 struct BitBoard {
-    // Bit format:
-    // let n[b] = n&(1<<b)
-    // then n[0-6] = col 0, n[0] is row 0 in fact
-    // n[7] is reserved
-    // n[8-14] = col 1
-    // n[15] is reserved
-    // ...
+
+    
     pos: u128, // '1' wherever current player's pieces are
     mask: u128, // '1' wherever anyone's pieces are
     moves: usize
 }
 impl BitBoard{
     const BOTTOM_MASK: u128 = 0x010101010101010101; // Mask for bottom 9 cells
-
+    
+    // The current position, and a '1' above the top of each column.
+    // Every position has a unique key
+    // Every token belonging to the current player is marked with a 1
+    // The cell above the topmost token in any column is also marked with a 1,
+    // Even if it is out of bounds
     fn key(&self) -> u128 {
-        // The current position, and a '1' above the top of each column.
-        // A unique key for any position.
         self.pos ^ (self.mask + Self::BOTTOM_MASK)
     }
     // mask corresponding to the top cell of a column
     fn top_mask(col:usize) -> u128{
         (1 as u128) << (col*8 + 6)
     }
+    
     // mask corresponding to the bottom cell of a column
     fn bottom_mask(col:usize) -> u128{
         (1 as u128) << (col*8)
@@ -202,14 +206,15 @@ impl Board for BitBoard {
     }
 }
 
-// Evaluate a move
-// alpha: worst possible value
-// beta: best possible value
-
+/*
+    A simple hash table optimized for connect 4.
+    The hash algorithm could need to be changed.
+*/
 struct TranspositionTable {
     keys:Vec<u128>,
     values:Vec<i8>
 }
+
 impl TranspositionTable {
     const SIZE:usize = (1<<24);
     fn new()->Self{
@@ -250,7 +255,25 @@ impl Solver{
         }
     }
     /*
-        The Negamax algorithm
+        The Negamax algorithm is a case of the minmax algorithm for games 
+        where (your score + opponent's score) = k, where k is constant
+        This is true for games such as chess, battleship and connect 4
+        
+        Alpha beta pruning is used to reduce the time spent evaluating bad moves.
+        If, partway through evaluation, a move can be determined to be worse than
+        some other move, then there is no need to evaluate it further.
+        
+        Alpha represents the lower bound on the current player's possible score,
+        while Beta represents the upper bound (assuming optimal play by the opponent)
+        
+        Alpha-beta pruning works especially well when the order in which moves
+        are evaluated is based on a heuristic which generally puts better
+        moves first. Connect 4 has a simple one; start from the middle and move outward.
+        
+        A transposition table is used to cache the beta values of 
+        previously-evaluated positions. In connect 4, a position may often 
+        be reachable through many different sequence of moves.
+        
     */
     fn negamax (&mut self, b: &BitBoard, mut alpha: i8, mut beta: i8, depth: usize) -> i8
     {
@@ -266,15 +289,13 @@ impl Solver{
             }
         }
 
-        // Maximum value
-        //let mut max = 127;
-
         let ttv = self.tt.get(b.key());
         
         let max = ttv.unwrap_or(127);
 
         if beta > max{
             beta = max;
+            
             if alpha >= beta{
                 return beta;
             }
